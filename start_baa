@@ -1,0 +1,165 @@
+#!/bin/bash
+sync=""
+lsusb >lsusb$$
+num_rtl=`grep 0bda:283. lsusb$$|wc -l`
+num_b210=`grep 2500:0020 lsusb$$|wc -l`
+num_b205=`grep 2500:002'[12]' lsusb$$|wc -l`
+num_usrp1=`grep fffe:0002 lsusb$$|wc -l`
+num_lime_usb=`grep 1d50:6108 lsusb$$|wc -l`
+num_lime_mini=`grep 0403:601f lsusb$$|wc -l`
+num_airspy=`grep 1d50:60a1 lsusb$$| wc -l`
+num_hackrf=`grep 1d50:6080 lsusb$$| wc -l`
+rm -rf lsusb$$
+ant="NONE"
+if [ $num_rtl -gt 0 ]
+then
+	title="RTL SDR Setup"
+	lowest=24e6
+	highest=1500e6
+    speeds="950e3 1e6 2e6 2.5e6 2.56e6"
+    gains="10 20 30 40"
+    ant="NONE"
+	case $num_rtl in
+		1) 
+		   device="rtl=0 file=/dev/zero,rate=4e6"
+		   ;;
+		2)
+		   device="rtl=0 rtl=1"
+	esac
+elif [ $num_usrp1 -gt 0 ]
+then
+    title="USRP1 Setup"
+    lowest=1e6
+    highest=4000e6
+	speeds="1e6 2e6 3.2e6 4e6 6.4e6 8e6"
+	gains="10 20 30 40 50 60 70"
+	device="uhd,type=usrp1,num_recv_frames=256,nchan=2,otw_format=sc8,peak=0.1,fpga=usrp1_fpga_4rx.rbf,subdev='A:0 B:0'"
+	ant="NONE"
+elif [ $num_b210 -gt 0 ]
+then
+    lowest=50e6
+    highest=6000e6
+	title="USRP B210 Setup"
+	uhd_usrp_probe --args "type=b200" >b2xx_setup_txt$$ 2>&1
+	speeds="1.0e6 2.0e6 2.5e6 3.0e6 3.5e6 4.0e6 4.5e6 5.0e6"
+	gains="30 40 50 60 70"
+	type=`grep 'Detected.*evice.*B210' b2xx_setup_txt$$ |wc -l`
+	echo type is $type
+	if [ $type -eq 1 ]
+	then
+		device="uhd,type=b200,num_recv_frames=256,nchan=2"
+	else
+		device="uhd,type=b200,num_recv_frames=256 file=/dev/zero,rate=10e6"
+	fi
+	rm -f b2xx_setup_txt$$
+	ant=RX2
+	sync="--sync 1"
+elif [ $num_b205 -gt 0 ]
+then
+    lowest=50e6
+    highest=6000e6
+	title="USRP B205 Setup"
+	speeds="1.0e6 2.0e6 2.5e6 3.0e6 3.5e6 4.0e6 4.5e6 5.0e6"
+	gains="30 40 50 60 70"
+	device="uhd,type=b200,num_recv_frames=256 file=/dev/zero,rate=10e6"
+	ant=RX2
+elif [ $num_lime_usb -gt 0 ]
+then
+    lowest=50e6
+    highest=3800e6
+    title="Lime USB Setup"
+	speeds="1.0e6 2.0e6 2.5e6 3.0e6 3.5e6 4.0e6 4.5e6 5.0e6"
+	gains="30 40 50 60 70 80"
+	device="soapy,driver=lime,nchan=2"
+	ant=LNAW
+elif [ $num_lime_mini -gt 0 ]
+then
+    lowest=50e6
+    highest=3800e6
+    title="Lime Mini Setup"
+	speeds="1.0e6 2.0e6 2.5e6 3.0e6 3.5e6 4.0e6 4.5e6 5.0e6"
+	gains="30 40 50 60 70 80"
+	device="soapy,driver=lime file=/dev/zero,rate=10e6"
+	ant=LNAW
+elif [ $num_airspy -gt 0 ]
+then
+    airspy_info >>airspy_info_txt$$
+    lowest=24e6
+    highest=1500e6
+    title="AirSpy Setup"
+    tenM=`grep "10.000.*MSPS" airspy_info_txt$$ |wc -l`
+    rm -f airspy_info_txt$$
+    if [ $tenM -ge 1 ]
+    then
+		speeds="2.5e6 10.0e6"
+	else
+		speeds="3.0e6 6.0e6"
+	fi
+	gains="10 20 30 40"
+	device="airspy=0,linearity file=/dev/zero,rate=10e6"
+	ant="NONE"
+elif [ $num_hackrf -gt 0 ]
+then
+	gains="10 20 30 40 50"
+	device="hackrf=0 file=/dev/zero,rate=10e6"
+	ant="NONE"
+	speeds="8e6 10e6"
+	lowest=1e6
+	highest=6e6
+else
+	zenity --error --text "No SDR device found..."
+	exit
+fi
+speeds=`echo $speeds|sed -e 's/ /|/g'`
+gains=`echo $gains|sed -e 's/ /|/g'`
+values=`zenity --width 300 --title "$title" --forms  --separator "@" --text "$title" --add-list="Gain" --list-values="$gains" --add-list="Samp. Rate" --list-values="$speeds" --add-entry="Freq."`
+if [ @@ = "@$values@" ]
+then
+	zenity --info --text "Cancelled at user request"
+	exit
+fi
+values=`echo $values|sed -e s/,//g`
+gain=`echo $values|awk -F"@" '{print $1}'`
+speed=`echo $values|awk -F"@" '{print $2}'`
+freq=`echo $values|awk -F"@" '{print $3}'`
+
+if [ @@ = "@$gain@" ]
+then
+	zenity --error --text "Missing value for gain"
+	exit
+fi
+
+if [ @@ = "@$speed@" ]
+then
+	zenity --error --text "Missing value for sample rate"
+	exit
+fi
+
+if [ @@ = "@$freq@" ]
+then
+	zenity --error --text "Missing value for frequency"
+	exit
+fi
+tfreq=`echo $freq|awk '{printf ("%d\n", $1)}'`
+if [ $tfreq = 0 ]
+then
+	zenity --error --text "\'$freq\' is an invalid value for frequency\nMust be floating-point"
+	exit
+fi
+inrange=`echo $freq|awk -v lowest=$lowest -v highest=$highest '{if ($1 >= lowest && $1 <= highest) {print "TRUE"} else {print "FALSE"}}'`
+if [ $inrange = FALSE ]
+then
+	zenity --error --text "frequency value of \'$freq\' must be within $lowest and $highest"
+	exit
+fi
+if [ $ant != NONE ]
+then
+	baa_seminar.py --device "$device" --srate "$speed" --rfgain "$gain" --freq "$freq" --antenna "$ant"  $sync >$HOME/baa_run_log.txt 2>&1
+else
+	baa_seminar.py --device "$device" --srate "$speed" --rfgain "$gain" --freq "$freq"  $sync >$HOME/baa_run_log.txt 2>&1
+fi
+
+if [ $? -ne 0 ]
+then
+	zenity --title "BAA Runtime Error" --text-info --filename $HOME/baa_run_log.txt
+fi
